@@ -14,9 +14,6 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
-#include <thread>
-#include <vector>
-
 
 using namespace bom;
 
@@ -275,32 +272,6 @@ auto read_volume(std::filesystem::path const& path, string moment) -> volume
     }
 
     return vol;
-}
-
-
-// this is a VERY slow and naive implementation - just hacking it in to get some results
-auto speckle_filter(array2f& data, float min_dbz, int min_neighbours) -> void{
-    auto copy = data;
-
-    for (size_t y = 1; y < data.extents().y - 1; ++y){
-        for (size_t x = 1; x < data.extents().x - 1; ++x){
-            if (copy[y][x] <= min_dbz)
-                continue;
-
-            auto count = (
-                (copy[y-1][x-1] > min_dbz ? 1 : 0)
-                + (copy[y-1][ x ] > min_dbz ? 1 : 0)
-                + (copy[y-1][x+1] > min_dbz ? 1 : 0)
-                + (copy[ y ][x-1] > min_dbz ? 1 : 0)
-                + (copy[ y ][x+1] > min_dbz ? 1 : 0)
-                + (copy[y+1][x-1] > min_dbz ? 1 : 0)
-                + (copy[y+1][ x ] > min_dbz ? 1 : 0)
-                + (copy[y+1][x+1] > min_dbz ? 1 : 0)
-            );
-            if (count < min_neighbours)
-                data[y][x] = min_dbz;
-        }
-    }
 }
 
 
