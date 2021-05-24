@@ -14,9 +14,6 @@ project(leroi)
 # setup standard install locations
 include(GNUInstallDirs)
 
-# include_directories(/home/vlouf/.local/include)
-# link_directories(/home/vlouf/.local/lib)
-# link_directories(/home/vlouf/.local/lib64)
 # external dependencies
 find_package(bom-core REQUIRED)
 list(APPEND DEPENDENCY_LIBRARIES bom-core)
