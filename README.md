@@ -54,7 +54,6 @@ grid_fields = leroi.leroi_interp(
     weight_type="Barnes",
     Rc=None,
     k=100,
-    smooth_kw={"filter_its": 0},
 )
 
 grid = leroi.build_pyart_grid(radar, grid_fields, grid_shape, grid_limits)
@@ -111,10 +110,6 @@ Important parameters:
   maximum azimuthal gate spacing across the sweeps.
 - `k`: maximum nearest neighbours queried around each grid point. Increase this
   if LEROI warns that valid points are being left out of the radius of influence.
-- `smooth_kw`: keyword arguments passed to `smooth_grid`. Keep
-  `{"filter_its": 0}` to disable post-gridding smoothing. To enable smoothing
-  without a custom kernel, provide `corr_lens`, for example
-  `{"filter_its": 2, "corr_lens": (1000.0, 2000.0)}`.
 - `ground_elevation`: set the first sweep height to zero when its fixed angle is
   at or below this elevation angle.
 - `advection`: optional constant `(u, v)` advection in metres per second used to
@@ -130,9 +125,6 @@ Use `build_pyart_grid` when downstream tools expect a Py-ART `Grid`. Its
 - Vertical 90 degree scans are ignored when building PPI interpolation surfaces.
 - LEROI warns when the requested grid extends outside the radar coverage enough
   that PPI heights cannot be filled everywhere.
-- Post-gridding smoothing uses `astropy.convolution.convolve` with either a
-  custom kernel or a boxcar kernel derived from vertical and horizontal
-  correlation lengths.
 
 ## Reference
 

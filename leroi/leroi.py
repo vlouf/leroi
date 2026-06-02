@@ -7,7 +7,6 @@ import multiprocessing as mp
 import pyart
 import numpy as np
 from scipy.spatial import cKDTree
-from astropy.convolution import convolve
 from pyart.config import get_metadata
 
 def fill_heights(a):
@@ -187,64 +186,6 @@ def _calculate_ppi_heights(radar, coords, weight_type, Rc, multiprocessing, grou
         slices.append(slce.reshape((len(coords[1]), len(coords[2]))))
 
     return np.ma.stack(slices)
-
-
-def smooth_grid(grid, coords, verbose, kernel=None, corr_lens=None, 
-                filter_its=0, preserve_nan=False, boundary = "extend"):
-    """Smooth a gridded field as a postprocessing step.
-
-    Provide either a custom Astropy convolution `kernel` or correlation lengths
-    from which a three-dimensional boxcar kernel can be derived.
-
-    Parameters
-    ----------
-    grid : array-like
-        Three-dimensional gridded field with shape `(z, y, x)`.
-    coords : sequence[np.ndarray]
-        One-dimensional grid coordinates ordered as `(z, y, x)`.
-    verbose : bool
-        Print progress messages when `True`.
-    kernel : astropy.convolution.Kernel or None, optional
-        Kernel passed to `astropy.convolution.convolve`.
-    corr_lens : tuple[float, float] or None, optional
-        Vertical and horizontal correlation lengths in metres. Required when
-        `kernel` is not supplied and `filter_its` is greater than zero.
-    filter_its : int, optional
-        Number of smoothing iterations.
-    preserve_nan : bool, optional
-        Passed through to `astropy.convolution.convolve`.
-    boundary : str, optional
-        Boundary mode passed through to `astropy.convolution.convolve`.
-
-    Returns
-    -------
-    np.ndarray
-        Smoothed grid.
-    """
-
-    dz = np.mean(np.diff(np.sort(coords[0])))
-    dy = np.mean(np.diff(np.sort(coords[1])))
-    dx = np.mean(np.diff(np.sort(coords[2])))
-    dh = np.mean((dy, dx))
-
-    if verbose:
-        print("Filtering...")
-
-    if kernel is None:
-        if corr_lens == None:
-            raise NotImplementedError(
-                """You must either input a convolution kernel
-                ('kernel') or some correlation lengths ('corr_len')."""
-            )
-        v_window = int(np.ceil(corr_lens[0] / dz) // 2 * 2 + 1)
-        h_window = int(np.ceil(corr_lens[1] / dh) // 2 * 2 + 1)
-        kernel = np.ones((v_window, h_window, h_window)) / float(v_window * h_window * h_window)
-
-    smooth = grid.copy()
-    for i in range(filter_its):
-        smooth = convolve(smooth, kernel, boundary=boundary, preserve_nan=preserve_nan)
-
-    return smooth.copy()
 
 
 def interp_along_axis(y, x, newx, axis, inverse=False, method="linear"):
@@ -449,7 +390,6 @@ def leroi_interp(
     Rc=None,
     k=100,
     verbose=True,
-    smooth_kw = {'filter_its':0},
     multiprocessing=True,
     ground_elevation=-999,
     advection = (0,0),
@@ -482,8 +422,6 @@ def leroi_interp(
         Maximum number of nearest gates queried around each grid point.
     verbose : bool, optional
         Print progress messages when `True`.
-    smooth_kw : dict, optional
-        Keyword arguments for `smooth_grid`. The default disables smoothing.
     multiprocessing : bool, optional
         Use all available `scipy.spatial.cKDTree.query` workers when `True`.
     ground_elevation : float, optional
@@ -547,9 +485,6 @@ def leroi_interp(
             ppis.reshape((radar.nsweeps, dims[1], dims[2])), mask.reshape((radar.nsweeps, dims[1], dims[2]))
         )
         grid = interp_along_axis(out.filled(np.nan), ppi_height, Z, axis=0, method="linear")
-
-        if smooth_kw['filter_its'] > 0:
-            grid = smooth_grid(grid, coords, verbose, **smooth_kw)
 
         # add to output dictionary
         fields[field] = {"data": np.ma.masked_array(grid, mask=np.isnan(grid))}
