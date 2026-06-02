@@ -1,6 +1,6 @@
 # LEROI
 
-LEROI is a small Python package for gridding weather radar PPI data with Py-ART.
+LEROI is a small Python package for gridding weather radar PPI data.
 It interpolates each sweep horizontally with a radius of influence, estimates
 the PPI height surfaces, linearly interpolates those sweep fields onto a
 Cartesian height grid, and can package the result as a Py-ART `Grid`.
@@ -136,8 +136,6 @@ Use `build_pyart_grid` when downstream tools expect a Py-ART `Grid`. Its
 
 ## Reference
 
-Dahl, N. A., Shapiro, A., Potvin, C. K., Theisen, A., Gebauer, J. G.,
-Schenkman, A. D., and Xue, M. (2019). High-Resolution, Rapid-Scan Dual-Doppler
-Retrievals of Vertical Velocity in a Simulated Supercell. Journal of Atmospheric
-and Oceanic Technology, 36(8), 1477-1500.
-https://journals.ametsoc.org/view/journals/atot/36/8/jtech-d-18-0211.1.xml
+Brook, J. P., A. Protat, C. K. Potvin, J. S. Soderholm, and H. McGowan, 2023: The 
+Effects of Spatial Interpolation on a Novel, Dual-Doppler 3D Wind Retrieval Technique. 
+J. Atmos. Oceanic Technol., 40, 1325–1347, https://doi.org/10.1175/JTECH-D-23-0004.1.
