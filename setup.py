@@ -1,8 +1,4 @@
-"""A setuptools based setup module.
-See:
-https://packaging.python.org/en/latest/distributing.html
-https://github.com/pypa/sampleproject
-"""
+"""Packaging metadata for the LEROI radar gridding package."""
 
 # Always prefer setuptools over distutils
 from setuptools import setup, find_packages
@@ -18,7 +14,7 @@ with open(path.join(here, "README.md"), encoding="utf-8") as f:
 setup(
     name="leroi",
     version="0.0.1",
-    description="Radar Data Objective Analysis Using Cressman Interpolation with a Leise Filter.",
+    description="Radar objective analysis using Barnes or Cressman interpolation.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/jordanbrook/leroi",

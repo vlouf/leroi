@@ -1,3 +1,5 @@
+"""Interpolation utilities for gridding Py-ART radar PPI data."""
+
 import time
 import warnings
 import multiprocessing as mp
@@ -7,24 +9,25 @@ import numpy as np
 from scipy.spatial import cKDTree
 from astropy.convolution import convolve
 from pyart.config import get_metadata
-import warnings
 
 def fill_heights(a):
-    """
-    Function to fill in fake, monotonically increasing heights for columns
-        which have valid data in the column either above or below. If 
-        there is missing heights in the middle of a column (which shouldn't
-        happen) or if there are complete missing columns (grid outside radar
-        range), a warning is raise to the user. 
-    
-    Inputs:
+    """Fill missing PPI heights above or below valid data in each grid column.
+
+    Missing heights below the lowest valid sweep are filled with that lowest
+    valid height, and missing heights above the highest valid sweep are filled
+    with the highest valid height. Remaining missing values indicate columns
+    that are outside radar coverage or have gaps inside the sweep stack, and a
+    warning is issued.
+
+    Parameters
+    ----------
+    a : np.ma.MaskedArray
+        PPI height array with shape `(sweep, y, x)`.
+
+    Returns
     -------
-    a : (np.ma.masked_array)
-        heights array, masked values in columns will be filled
-          
-    Outputs:
-    out : (np.ma.masked_array)
-        filled heights
+    np.ma.MaskedArray
+        Height array with fillable edge gaps replaced.
     """
     valid = ~a.mask
     a = a.filled(np.nan)
@@ -43,24 +46,25 @@ def fill_heights(a):
     return out
 
 def get_data_mask(radar, fields, gatefilter=None):
-    """
-    Create a mask for the gridding algorithm by combining
-    all masks from selected radar fields and optionally a
-    pyart gatefilter
+    """Create a combined invalid-data mask for interpolation.
 
-    Parameters:
-    -----------
-    radar : (object)
-        Pyart radar object
-    fields : (list)
-        List of fields to accumulate the mask from
-    gatefilter : (object)
-        A pyart gatefilter
+    A gate is valid only when it is unmasked in every requested field and, when
+    supplied, is not excluded by the Py-ART gate filter.
 
-    Returns:
-    --------
-    mask : (np.array)
-        Data mask same shape as radar fields, 1 = masked
+    Parameters
+    ----------
+    radar : pyart.core.Radar
+        Radar object containing the fields.
+    fields : list[str]
+        Field names whose masks should be combined.
+    gatefilter : pyart.correct.GateFilter or None, optional
+        Optional Py-ART gate filter.
+
+    Returns
+    -------
+    np.ndarray
+        Boolean mask with the same `(ray, gate)` shape as the radar fields.
+        `True` marks invalid gates.
     """
 
     mask = np.ones((radar.nrays, radar.ngates)).astype("bool")
@@ -76,23 +80,25 @@ def get_data_mask(radar, fields, gatefilter=None):
 
 
 def get_leroy_roi(radar, coords, frac=0.6):
-    """
-    Get a radius of influence for the ppis based on the azimuthal spacing of each sweep
-    Refer to Dahl et al (2019) for details here.
-    
-    Parameters:
-    -----------
-    radar (object):
-        pyart radar object
-    coords (list):
-        list of arrays containing z, y, x dimensions
-    frac (float):
-        fraction of largest data spacing to set ROI
-        
-    Returns:
-    --------
-    roi (float):
-        radius of influence for ppi cressman gridding
+    """Estimate the horizontal radius of influence from sweep azimuth spacing.
+
+    The estimate follows the spacing guidance used by Dahl et al. (2019): LEROI
+    finds the largest azimuthal spacing among PPI sweeps and scales the maximum
+    grid range by `frac`.
+
+    Parameters
+    ----------
+    radar : pyart.core.Radar
+        Radar object.
+    coords : sequence[np.ndarray]
+        One-dimensional grid coordinates ordered as `(z, y, x)`.
+    frac : float, optional
+        Fraction of the largest azimuthal spacing to use.
+
+    Returns
+    -------
+    float
+        Radius of influence in metres.
     """
     roi = 0
     rmax = np.sqrt(max(abs(coords[0])) ** 2 + max(abs(coords[1])) ** 2 + max(abs(coords[2])) ** 2)
@@ -106,26 +112,32 @@ def get_leroy_roi(radar, coords, frac=0.6):
 
 
 def _calculate_ppi_heights(radar, coords, weight_type, Rc, multiprocessing, ground_elevation):
-    """
-    Calculate the height of ppi scans in horizontal cartesian coordinates
+    """Calculate PPI sweep heights on the horizontal grid.
 
-    Parameters:
-    -----------
-    radar: (object)
-        pyart radar object
-    coords (list):
-        list of arrays containing z, y, x dimensions
-    Rc (float):
-        Cressman radius of influence
-    multiprocessing: (bool)
-        whether to use multiple threads in scipy.cKDTree.query()
-    ground_elevation: (float)
-        make first tilt equal to 0 height if below this elevation
+    Each sweep's gate heights are projected onto the requested `(y, x)` grid
+    with the same Barnes or Cressman radius-of-influence weighting used for
+    fields.
 
-    Returns:
-    --------
-    heights: (array)
-        heights of each 2d ppi, stacked into 1st dimension
+    Parameters
+    ----------
+    radar : pyart.core.Radar
+        Radar object.
+    coords : sequence[np.ndarray]
+        One-dimensional grid coordinates ordered as `(z, y, x)`.
+    weight_type : {"Barnes", "Cressman"}
+        Horizontal weighting method.
+    Rc : float
+        Radius of influence in metres.
+    multiprocessing : bool
+        Use all available `scipy.spatial.cKDTree.query` workers when `True`.
+    ground_elevation : float
+        Set the lowest sweep height to zero when its fixed angle is at or below
+        this value.
+
+    Returns
+    -------
+    np.ma.MaskedArray
+        Sweep height array with shape `(sweep, y, x)`.
     """
     slices = []
     elevations = radar.fixed_angle["data"]
@@ -179,28 +191,35 @@ def _calculate_ppi_heights(radar, coords, weight_type, Rc, multiprocessing, grou
 
 def smooth_grid(grid, coords, verbose, kernel=None, corr_lens=None, 
                 filter_its=0, preserve_nan=False, boundary = "extend"):
-    """
-    Smooth a gridded field (postprocessing step)
+    """Smooth a gridded field as a postprocessing step.
 
-    Parameters:
-    -----------
-    grid: (array)
-        3d array containing gridded field
-    coords (list):
-        list of arrays containing z, y, x dimensions
-    kernel: (object)
-        kernel for the astropy.convole function
-    corr_lens: (array-like)
-        correlation lengths in vertical and horizontal dimensions
-    filter_its: (int)
-        number of smoothing iterations
-    verbose: (bool)
-        whether to print progress messages
+    Provide either a custom Astropy convolution `kernel` or correlation lengths
+    from which a three-dimensional boxcar kernel can be derived.
 
-    Returns:
-    --------
-    smooth: (array)
-        smoothed gridded field
+    Parameters
+    ----------
+    grid : array-like
+        Three-dimensional gridded field with shape `(z, y, x)`.
+    coords : sequence[np.ndarray]
+        One-dimensional grid coordinates ordered as `(z, y, x)`.
+    verbose : bool
+        Print progress messages when `True`.
+    kernel : astropy.convolution.Kernel or None, optional
+        Kernel passed to `astropy.convolution.convolve`.
+    corr_lens : tuple[float, float] or None, optional
+        Vertical and horizontal correlation lengths in metres. Required when
+        `kernel` is not supplied and `filter_its` is greater than zero.
+    filter_its : int, optional
+        Number of smoothing iterations.
+    preserve_nan : bool, optional
+        Passed through to `astropy.convolution.convolve`.
+    boundary : str, optional
+        Boundary mode passed through to `astropy.convolution.convolve`.
+
+    Returns
+    -------
+    np.ndarray
+        Smoothed grid.
     """
 
     dz = np.mean(np.diff(np.sort(coords[0])))
@@ -219,7 +238,7 @@ def smooth_grid(grid, coords, verbose, kernel=None, corr_lens=None,
             )
         v_window = int(np.ceil(corr_lens[0] / dz) // 2 * 2 + 1)
         h_window = int(np.ceil(corr_lens[1] / dh) // 2 * 2 + 1)
-        kernel = np.ones((v_window, h_window, h_window)) / np.float(v_window * h_window * h_window)
+        kernel = np.ones((v_window, h_window, h_window)) / float(v_window * h_window * h_window)
 
     smooth = grid.copy()
     for i in range(filter_its):
@@ -229,17 +248,37 @@ def smooth_grid(grid, coords, verbose, kernel=None, corr_lens=None,
 
 
 def interp_along_axis(y, x, newx, axis, inverse=False, method="linear"):
-    """ Linear interpolation with irregular grid, from:
+    """Interpolate values along one axis of an irregular grid.
+
+    This vectorized routine is adapted from Peter Kalverla's March 2018
+    StackOverflow answer:
     https://stackoverflow.com/questions/28934767/best-way-to-interpolate-a-numpy-ndarray-along-an-axis
 
-    Interpolate vertical profiles, e.g. of atmospheric variables
-    using vectorized numpy operations
-    This function assumes that the x-coordinate increases monotonically
-    Peter Kalverla
-    March 2018
-    --------------------
-    More info:
-    Algorithm from: http://www.paulinternet.nl/?page=bicubic
+    Parameters
+    ----------
+    y : np.ndarray
+        Values to interpolate.
+    x : np.ndarray
+        Existing coordinates for `y`.
+    newx : np.ndarray
+        Target coordinates.
+    axis : int
+        Axis along which to interpolate.
+    inverse : bool, optional
+        Reverse the interpolation axis before and after interpolation. This is
+        useful for coordinates that are naturally descending.
+    method : {"linear", "cubic"}, optional
+        Interpolation method.
+
+    Returns
+    -------
+    np.ndarray
+        Interpolated values with `axis` resized to match `newx`.
+
+    Notes
+    -----
+    The coordinate arrays must be monotonic along `axis`; target values outside
+    the source coordinate range are filled with NaN.
     """
     # View of x and y with axis as first dimension
     if inverse:
@@ -315,8 +354,10 @@ def interp_along_axis(y, x, newx, axis, inverse=False, method="linear"):
 
 
 def _setup_interpolate(radar, coords, dmask, weight_type, Rc, multiprocessing, k, verbose, advection, t0):
-    """
-    Setup all the stuff needed for the ppi interpolation
+    """Precompute sweep interpolation weights and gate indices.
+
+    This builds one horizontal `cKDTree` lookup per PPI sweep and stores only the
+    model grid points that have at least one gate inside the radius of influence.
     """
     # setup stuff
     nsweeps = radar.nsweeps
@@ -372,7 +413,7 @@ def _setup_interpolate(radar, coords, dmask, weight_type, Rc, multiprocessing, k
         if valid[:, -1].sum() > 0:
             warnings.warn("\n Some points are being left out of radius of influence, make 'k' bigger!")
 
-        # set invalid indicies to 0 to avoid errors, they are masked out by the weights anyway
+        # set invalid indices to 0 to avoid errors, they are masked out by the weights anyway
         idx[idx == ndata] = 0
 
         # do all of the weighting stuff based on kdtree distance
@@ -414,45 +455,50 @@ def leroi_interp(
     advection = (0,0),
     t0 = 0
 ):
-    """
-    Interpolate multiple fields from a radar object to a grid. This
-    is an implementation of the method described in Dahl et. al. (2019).
+    """Interpolate one or more radar fields onto a Cartesian grid.
 
-    Inputs:
-    radar: (object)
-        pyart radar object
-    coords: (tuple)
-        tuple of 3 1d arrays containing z, y, x of grid
-    field_names: (list or string)
-        field names in radar to interpolate
-    gatefilter: object
-        pyart gatefilter object
-    weight_type: (string)
-        Type of weighting, either 'Barnes' or 'Cressman'
-    Rc: (float)
-        Cressman radius of interpolation, calculated if not supplied
-    k: (int)
-        max number of points within a radius of influence
-    filter_its: (int)
-        number of filter iterations for the low-pass filter
-    verbose: (bool)
-        whether to print progress messages
-    kernel: (astropy.kernel)
-        user defined kernel for smoothing (boxcar filter if not specified)
-    corr_lens: (tuple)
-        correlation lengths for smoothing filter in vert. and horiz. dims resp.
-    multiprocessing: (bool)
-        whether to use multiple threads in scipy.cKDTree.query()
-    ground_elevation: (float)
-        make first tilt equal to 0 height if below this elevation
-    advection: (tuple)
-        U and V constant advection in m/s
+    LEROI first interpolates each PPI sweep horizontally with Barnes or Cressman
+    weighting inside a radius of influence, then linearly interpolates between
+    sweep-height surfaces onto the requested vertical coordinate. The method is
+    based on Dahl et al. (2019).
 
-    Returns:
-    --------
-    fields: (list or array)
-        list or array containing all interpolated field(s)
+    Parameters
+    ----------
+    radar : pyart.core.Radar
+        Radar object containing the source fields.
+    coords : sequence[np.ndarray]
+        Three one-dimensional grid coordinate arrays ordered as `(z, y, x)`, in
+        metres relative to the radar origin.
+    field_names : str, list[str], or None, optional
+        Field name or names to interpolate. Defaults to all radar fields.
+    gatefilter : pyart.correct.GateFilter or None, optional
+        Optional Py-ART gate filter; excluded gates are ignored.
+    weight_type : {"Barnes", "Cressman"}, optional
+        Horizontal radius-of-influence weighting method.
+    Rc : float or None, optional
+        Radius of influence in metres. When `None`, LEROI estimates a value from
+        sweep azimuth spacing.
+    k : int, optional
+        Maximum number of nearest gates queried around each grid point.
+    verbose : bool, optional
+        Print progress messages when `True`.
+    smooth_kw : dict, optional
+        Keyword arguments for `smooth_grid`. The default disables smoothing.
+    multiprocessing : bool, optional
+        Use all available `scipy.spatial.cKDTree.query` workers when `True`.
+    ground_elevation : float, optional
+        Set the first sweep height to zero when its fixed angle is at or below
+        this value.
+    advection : tuple[float, float], optional
+        Constant `(u, v)` advection in metres per second applied to gate
+        locations relative to `t0`.
+    t0 : float, optional
+        Reference time in the same units as `radar.time["data"]`.
 
+    Returns
+    -------
+    dict
+        Py-ART-style field dictionary whose arrays have shape `(z, y, x)`.
     """
     ti = time.time()
 
@@ -520,27 +566,26 @@ def leroi_interp(
 
 
 def build_pyart_grid(radar, fields, gs, gb, origin = None):
-    """
-    Generate a PyART Grid object from a Radar Object and gridded fields.
+    """Build a Py-ART `Grid` from gridded LEROI fields.
 
-    Parameters:
-    ===========
-    radar: (object)
-        pyart radar object
-    fields: (dict)
-        Radar fields to include in Grid.
-    gs: Tuple[int, int, int]
-        Tuple of the size of (z, y, x)
-    gb: Tuple[Tuple[float, float], Tuple[float, float], Tuple[float, float]]
-        Tuple of 3 tuples containing ((zmin, zmax), (ymin, ymax), (xmin, xmax))
-    origin: Tuple(float, float, float)
-        Tuple containing the altitude, latitude, longitude of grid origin,
-            defaults to radar position if not provided. 
+    Parameters
+    ----------
+    radar : pyart.core.Radar
+        Source radar object used for metadata, time, and radar location.
+    fields : dict
+        Py-ART-style field dictionary, typically returned by `leroi_interp`.
+    gs : tuple[int, int, int]
+        Grid shape ordered as `(z, y, x)`.
+    gb : tuple[tuple[float, float], tuple[float, float], tuple[float, float]]
+        Grid bounds ordered as `((z_min, z_max), (y_min, y_max), (x_min, x_max))`.
+    origin : tuple[float, float, float] or None, optional
+        Grid origin as `(altitude, latitude, longitude)`. Defaults to the radar
+        location.
 
-    Returns:
-    ========
-    grid: pyart.core.Grid
-        PyART Grid.
+    Returns
+    -------
+    pyart.core.Grid
+        Grid containing the supplied fields.
     """
     # time dictionaries
     time = get_metadata("grid_time")
@@ -560,9 +605,9 @@ def build_pyart_grid(radar, fields, gs, gb, origin = None):
         origin_longitude["data"] = radar.longitude["data"]
         origin_altitude["data"] = radar.altitude["data"]
     else:
-        origin_altitude["data"]  = origin[0]
-        origin_latitude["data"]  = origin[1]
-        origin_longitude["data"] = origin[2]
+        origin_altitude["data"]  = [origin[0]]
+        origin_latitude["data"]  = [origin[1]]
+        origin_longitude["data"] = [origin[2]]
 
     # grid coordinate dictionaries
     nz, ny, nx = gs

@@ -4,15 +4,28 @@ from astropy.convolution import convolve
 import warnings
 
 def smooth_ppi(radar, field, sweep, c_len):
-    """
-    Function that returns a smooth ppi for a radar field. Smoothing
-    is performed using a convolution with a boxcar kernel, special
-    care is taken to interpolate nans and deal with ray edges.
-    
-    radar (pyart.radar): radar object
-    field (string): radar field name
-    sweep (int): radar sweep no.
-    c_len (float): length in meters for the boxcar kernel
+    """Return a smoothed PPI sweep for a radar field.
+
+    Smoothing is performed along each ray with a one-dimensional boxcar kernel.
+    `astropy.convolution.convolve` fills short NaN gaps during convolution, and
+    `gate_range_mask` masks edge gates where the smoothing window is not fully
+    supported by valid data.
+
+    Parameters
+    ----------
+    radar : pyart.core.Radar
+        Radar object containing the source field.
+    field : str
+        Radar field name.
+    sweep : int
+        Sweep number to smooth.
+    c_len : float
+        Smoothing length in metres.
+
+    Returns
+    -------
+    np.ma.MaskedArray
+        Smoothed two-dimensional PPI data for the requested sweep.
     """
     window = int(np.ceil(c_len / np.mean(np.diff(radar.range["data"]))) // 2 * 2 + 1)
     data = radar.get_field(sweep, field).filled(np.nan)
@@ -25,12 +38,19 @@ def smooth_ppi(radar, field, sweep, c_len):
 
 
 def gate_range_mask(data, window):
-    """
-    Return a mask for the edges of a ppi scar
-    
-    data (2d array): ppi data to be masked
-    window (int): number of gates to mask at 
-        beggining and end of ray
+    """Return a mask for unsupported gates at the edges of each ray.
+
+    Parameters
+    ----------
+    data : array-like
+        Two-dimensional PPI data with shape `(rays, gates)`.
+    window : int
+        Smoothing window length in gates.
+
+    Returns
+    -------
+    np.ndarray
+        Boolean mask with `True` where the smoothed data should be masked.
     """
     window -= int(window / 2)
     end = data.shape[1]
@@ -47,8 +67,21 @@ def gate_range_mask(data, window):
 
 
 def _clear_small_echoes_ppi(label_image, areas, min_area):
-    """
-    Despeckle filter worker, gets rid of objects with less than area
+    """Remove labelled PPI objects with total area below `min_area`.
+
+    Parameters
+    ----------
+    label_image : np.ndarray
+        Integer object labels, as returned by `pyart.correct.find_objects`.
+    areas : np.ndarray
+        Gate area estimates in square kilometres.
+    min_area : float
+        Minimum object area in square kilometres.
+
+    Returns
+    -------
+    np.ndarray
+        Label image with small objects set to zero.
     """
     small_echoes = []
     for i in range(1, np.amax(label_image) + 1):
@@ -65,17 +98,34 @@ def _clear_small_echoes_ppi(label_image, areas, min_area):
 
 def mask_invalid_data(radar, field, add_to=None, correlation_length=2000, 
                       min_field=0, min_area=10, return_smooth=False):
-    """
-    Apply a mask to an existing or new radar field. The mask attempts to filter out 
-    bad values by masking data outside of contiguous objects within ppi scans.
-    
-    radar (pyart object): pyar radar object
-    field (string): radar field name
-    add_to (list): list of field names to add the new mask to
-    correlation_length (float): greater length, greater convolutional smoothing window
-    min_field (float): field value threshold for valid data
-    min_area (float): minimum area of cells in km^2
-    return_smooth (bool): whether to create a new field with the smoothed data used for despeckling
+    """Mask radar data outside contiguous PPI echo objects.
+
+    The function smooths `field`, identifies contiguous objects in each non-
+    vertical PPI sweep with `pyart.correct.find_objects`, removes objects whose
+    area is below `min_area`, and applies the resulting mask to `add_to` fields.
+    The input radar is modified in place and returned.
+
+    Parameters
+    ----------
+    radar : pyart.core.Radar
+        Radar object to modify.
+    field : str
+        Field used to identify contiguous valid echo.
+    add_to : list[str] or None, optional
+        Field names that should receive the new mask. Defaults to `[field]`.
+    correlation_length : float, optional
+        Along-ray smoothing length in metres.
+    min_field : float, optional
+        Minimum smoothed field value treated as valid echo.
+    min_area : float, optional
+        Minimum contiguous object area in square kilometres.
+    return_smooth : bool, optional
+        Keep the temporary `<field>_smooth` field when `True`.
+
+    Returns
+    -------
+    pyart.core.Radar
+        The same radar object with updated field masks.
     """
     dR = np.mean(np.diff(radar.range["data"])) / 1e3
     elevations = radar.fixed_angle['data']
